@@ -12,6 +12,10 @@ struct AddIPRequest {
     address: String,
 }
 
+#[derive(Deserialize)]
+struct AddIPsRequest {
+    addresses: Vec<String>,
+}
 #[derive(Serialize)]
 struct AddIPResponse {
     success: bool,
@@ -45,6 +49,9 @@ impl TL4PApi {
         Router::new()
             .route("/api/v1/get_ips", get(Self::get_ips))
             .route("/api/v1/add_ip", post(Self::add_ip))
+            .route("/api/v1/remove_ip", post(Self::remove_ip))
+            .route("/api/v1/add_ips", post(Self::add_ips))
+            .route("/api/v1/override_rule", post(Self::override_rule))
             .with_state(self)
     }
     
@@ -57,6 +64,46 @@ impl TL4PApi {
 
     async fn get_ips(State(app): State<Self>) -> Json<Vec<String>> {
         Json(app.fw.get_rules_as_strings())
+    }
+    
+    async fn override_rule(State(app): State<Self>, Json(payload): Json<AddIPsRequest>) {
+        let mut parsed_address: Vec<IpNet> = vec![];
+        for address in payload.addresses {
+            match parse_to_ipnet(&address) {
+                Ok(ip_addr) => {
+                    parsed_address.push(ip_addr);
+                },
+                Err(_) => {}
+            };
+        };
+        app.fw.replace_rules(parsed_address);
+    }
+    
+    async fn add_ips(State(app): State<Self>, Json(payload): Json<AddIPsRequest>) {
+        for address in payload.addresses {
+            match parse_to_ipnet(&address) {
+                Ok(ip_addr) => {
+                    app.fw.add_network(ip_addr);
+                },
+                Err(_) => {}
+            };
+        };
+    }
+    
+    async fn remove_ip(State(app): State<Self>, Json(payload): Json<AddIPRequest>) -> Json<AddIPResponse> {
+        match parse_to_ipnet(&payload.address) {
+            Ok(ip_addr) => {
+                app.fw.remove_network(&ip_addr);
+                Json(AddIPResponse {
+                    success: true
+                })
+            },
+            Err(_) => {
+                Json(AddIPResponse {
+                    success: false
+                })
+            }
+        }
     }
     
     async fn add_ip(State(app): State<Self>, Json(payload): Json<AddIPRequest>) -> Json<AddIPResponse> {

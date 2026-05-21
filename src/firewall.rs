@@ -56,18 +56,6 @@ impl Firewall {
         self.whitelist.store(Arc::new(new_nets));
     }
 
-    pub fn add_batch(&self, nets: Vec<IpNet>) {
-        let mut new_nets = (**self.whitelist.load()).clone();
-
-        for net in nets {
-            if let Err(pos) = new_nets.binary_search(&net) {
-                new_nets.insert(pos, net);
-            }
-        }
-
-        self.whitelist.store(Arc::new(new_nets));
-    }
-
     pub fn get_rules_as_strings(&self) -> Vec<String> {
         let current_nets = self.whitelist.load();
 
