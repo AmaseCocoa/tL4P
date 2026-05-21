@@ -6,6 +6,7 @@ use axum::{Json, Router, extract::State, routing::{get, post}};
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 use tokio::signal;
+use tokio::sync::watch::{self, Sender};
 
 use crate::firewall::Firewall;
 
@@ -38,7 +39,7 @@ fn parse_to_ipnet(s: &str) -> Result<IpNet, String> {
     }
 }
 
-async fn shutdown_signal(fw: Firewall) {
+async fn shutdown_signal(fw: Firewall, shutdown_tx: Sender<bool>) {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
@@ -61,6 +62,7 @@ async fn shutdown_signal(fw: Firewall) {
         _ = terminate => {},
     }
 
+    let _ = shutdown_tx.send(true);
     if let Err(e) = fw.save_to_file() {
         eprintln!("Failed to save firewall rules: {}", e);
     }
@@ -90,40 +92,41 @@ impl TL4PApi {
     
     pub async fn run_api(&self) {
         let app = self.clone().into_router();
-
+        let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+        
         let fw = self.fw.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             
             loop {
-                interval.tick().await;
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let fw_clone = fw.clone();
+                        let res = tokio::task::spawn_blocking(move || {
+                            fw_clone.save_to_file()
+                        }).await;
                 
-                let fw_clone = fw.clone();
-                let res = tokio::task::spawn_blocking(move || {
-                    fw_clone.save_to_file()
-                }).await;
-        
-                match res {
-                    Ok(Ok(_)) => println!("Successfully saved."),
-                    Ok(Err(err)) => eprintln!("Error when saving rules: {}", err),
-                    Err(join_err) => eprintln!("Task panicked: {}", join_err),
+                        match res {
+                            Ok(Ok(_)) => println!("Successfully saved."),
+                            Ok(Err(err)) => eprintln!("Error when saving rules: {}", err),
+                            Err(join_err) => eprintln!("Task panicked: {}", join_err),
+                        }
+                    }
+                    _ = shutdown_rx.changed() => {
+                        if *shutdown_rx.borrow() {
+                            println!("Shutdown signal received in background task. Exiting loop...");
+                            break;
+                        }
+                    }
                 }
             }
         });
         
         let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await.unwrap();
         axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown_signal(self.fw.clone()))
+            .with_graceful_shutdown(shutdown_signal(self.fw.clone(), shutdown_tx))
             .await
             .unwrap();
-    }
-
-    async fn save(State(app): State<Self>) -> Json<TL4PAPIResponse> {
-        let res = app.fw.save_to_file();
-        Json(TL4PAPIResponse {
-            success: res.is_ok(),
-            reason: Some("failed_to_save".to_string())
-        })
     }
     
     async fn get_ips(State(app): State<Self>) -> Json<Vec<String>> {

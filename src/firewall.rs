@@ -84,9 +84,9 @@ impl Firewall {
 
     pub fn save_to_file(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let file_loc = Path::new(&self.data);
-        let current_nets = self.whitelist.load();
+        let current_nets = self.get_rules_as_strings();
         let file = File::create(file_loc)?;
-        serde_json::to_writer(file, &**current_nets)?;
+        serde_json::to_writer(file, &current_nets)?;
         Ok(())
     }
     
