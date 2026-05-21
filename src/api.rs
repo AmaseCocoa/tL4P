@@ -19,8 +19,9 @@ struct AddIPsRequest {
     addresses: Vec<String>,
 }
 #[derive(Serialize)]
-struct AddIPResponse {
+struct TL4PAPIResponse {
     success: bool,
+    reason: Option<String>
 }
 
 fn parse_to_ipnet(s: &str) -> Result<IpNet, String> {
@@ -93,13 +94,19 @@ impl TL4PApi {
         let fw = self.fw.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
-            interval.tick().await; 
-    
+            
             loop {
                 interval.tick().await;
-                match fw.save_to_file() {
-                    Ok(_) => {},
-                    Err(err) => eprintln!("Error when saving rules: {}", err)
+                
+                let fw_clone = fw.clone();
+                let res = tokio::task::spawn_blocking(move || {
+                    fw_clone.save_to_file()
+                }).await;
+        
+                match res {
+                    Ok(Ok(_)) => println!("Successfully saved."),
+                    Ok(Err(err)) => eprintln!("Error when saving rules: {}", err),
+                    Err(join_err) => eprintln!("Task panicked: {}", join_err),
                 }
             }
         });
@@ -111,10 +118,11 @@ impl TL4PApi {
             .unwrap();
     }
 
-    async fn save(State(app): State<Self>) -> Json<AddIPResponse> {
+    async fn save(State(app): State<Self>) -> Json<TL4PAPIResponse> {
         let res = app.fw.save_to_file();
-        Json(AddIPResponse {
-            success: res.is_ok()
+        Json(TL4PAPIResponse {
+            success: res.is_ok(),
+            reason: Some("failed_to_save".to_string())
         })
     }
     
@@ -122,7 +130,7 @@ impl TL4PApi {
         Json(app.fw.get_rules_as_strings())
     }
     
-    async fn override_rule(State(app): State<Self>, Json(payload): Json<AddIPsRequest>) -> Json<AddIPResponse> {
+    async fn override_rule(State(app): State<Self>, Json(payload): Json<AddIPsRequest>) -> Json<TL4PAPIResponse> {
         let mut parsed_address: Vec<IpNet> = vec![];
         for address in payload.addresses {
             match parse_to_ipnet(&address) {
@@ -133,13 +141,13 @@ impl TL4PApi {
             };
         };
         app.fw.replace_rules(parsed_address);
-        Json(AddIPResponse {
-            success: true
+        Json(TL4PAPIResponse {
+            success: true,
+            reason: None
         })
-        
     }
     
-    async fn add_ips(State(app): State<Self>, Json(payload): Json<AddIPsRequest>) -> Json<AddIPResponse> {
+    async fn add_ips(State(app): State<Self>, Json(payload): Json<AddIPsRequest>) -> Json<TL4PAPIResponse> {
         for address in payload.addresses {
             match parse_to_ipnet(&address) {
                 Ok(ip_addr) => {
@@ -150,40 +158,45 @@ impl TL4PApi {
                 Err(_) => {}
             };
         };
-        Json(AddIPResponse {
-            success: true
+        Json(TL4PAPIResponse {
+            success: true,
+            reason: None
         })
     }
     
-    async fn remove_ip(State(app): State<Self>, Json(payload): Json<AddIPRequest>) -> Json<AddIPResponse> {
+    async fn remove_ip(State(app): State<Self>, Json(payload): Json<AddIPRequest>) -> Json<TL4PAPIResponse> {
         match parse_to_ipnet(&payload.address) {
             Ok(ip_addr) => {
                 app.fw.remove_network(&ip_addr);
-                Json(AddIPResponse {
-                    success: true
+                Json(TL4PAPIResponse {
+                    success: true,
+                    reason: None
                 })
             },
-            Err(_) => {
-                Json(AddIPResponse {
-                    success: false
+            Err(e) => {
+                Json(TL4PAPIResponse {
+                    success: false,
+                    reason: Some(format!("{}", e))
                 })
             }
         }
     }
     
-    async fn add_ip(State(app): State<Self>, Json(payload): Json<AddIPRequest>) -> Json<AddIPResponse> {
+    async fn add_ip(State(app): State<Self>, Json(payload): Json<AddIPRequest>) -> Json<TL4PAPIResponse> {
         match parse_to_ipnet(&payload.address) {
             Ok(ip_addr) => {
                 if !app.fw.contains_net(&ip_addr) {
                     app.fw.add_network(ip_addr);
                 }
-                Json(AddIPResponse {
-                    success: true
+                Json(TL4PAPIResponse {
+                    success: true,
+                    reason: None
                 })
             },
-            Err(_) => {
-                Json(AddIPResponse {
-                    success: false
+            Err(e) => {
+                Json(TL4PAPIResponse {
+                    success: false,
+                    reason: Some(format!("{}", e))
                 })
             }
         }

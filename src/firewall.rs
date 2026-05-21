@@ -9,15 +9,15 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct Firewall {
     whitelist: Arc<ArcSwap<Vec<IpNet>>>,
-    data: String
+    data: String,
 }
 
 impl Firewall {
-    pub fn new(mut initial_nets: Vec<IpNet>, rule_location: String) -> Self {
-        initial_nets.sort();
+    pub fn new(initial_nets: Vec<IpNet>, rule_location: String) -> Self {
+        let aggregated = IpNet::aggregate(&initial_nets);
         Self {
-            whitelist: Arc::new(ArcSwap::from_pointee(initial_nets)),
-            data: rule_location
+            whitelist: Arc::new(ArcSwap::from_pointee(aggregated)),
+            data: rule_location,
         }
     }
 
@@ -26,11 +26,11 @@ impl Firewall {
         current_nets
             .binary_search_by(|net| {
                 if net.contains(ip) {
-                    std::cmp::Ordering::Equal
+                    Ordering::Equal
                 } else if *ip < net.network() {
-                    std::cmp::Ordering::Greater
+                    Ordering::Greater
                 } else {
-                    std::cmp::Ordering::Less
+                    Ordering::Less
                 }
             })
             .is_ok()
@@ -53,33 +53,36 @@ impl Firewall {
 
     pub fn add_network(&self, net: IpNet) {
         let mut new_nets = (**self.whitelist.load()).clone();
-        if let Err(pos) = new_nets.binary_search(&net) {
-            new_nets.insert(pos, net);
-            self.whitelist.store(Arc::new(new_nets));
-        }
+        new_nets.push(net);
+        
+        let aggregated = IpNet::aggregate(&new_nets);
+        self.whitelist.store(Arc::new(aggregated));
     }
 
     pub fn remove_network(&self, net: &IpNet) {
-        let mut new_nets = (**self.whitelist.load()).clone();
-        if let Ok(pos) = new_nets.binary_search(net) {
-            new_nets.remove(pos);
-            self.whitelist.store(Arc::new(new_nets));
-        }
+        let current_nets = self.whitelist.load();
+        
+        let filtered_nets: Vec<IpNet> = current_nets
+            .iter()
+            .filter(|existing_net| !net.contains(*existing_net))
+            .cloned()
+            .collect();
+
+        let aggregated = IpNet::aggregate(&filtered_nets);
+        self.whitelist.store(Arc::new(aggregated));
     }
 
-    pub fn replace_rules(&self, mut new_nets: Vec<IpNet>) {
-        new_nets.sort();
-
-        self.whitelist.store(Arc::new(new_nets));
+    pub fn replace_rules(&self, new_nets: Vec<IpNet>) {
+        let aggregated = IpNet::aggregate(&new_nets);
+        self.whitelist.store(Arc::new(aggregated));
     }
 
     pub fn get_rules_as_strings(&self) -> Vec<String> {
         let current_nets = self.whitelist.load();
-
         current_nets.iter().map(|net| net.to_string()).collect()
     }
 
-    pub fn save_to_file(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn save_to_file(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let file_loc = Path::new(&self.data);
         let current_nets = self.whitelist.load();
         let file = File::create(file_loc)?;
@@ -89,12 +92,11 @@ impl Firewall {
     
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
         let file = File::open(&path)?;
-        let mut nets: Vec<IpNet> = serde_json::from_reader(file)?;
-        nets.sort();
+        let nets: Vec<IpNet> = serde_json::from_reader(file)?;
+        let aggregated = IpNet::aggregate(&nets);
         Ok(Self {
-            whitelist: Arc::new(ArcSwap::from_pointee(nets)),
-            data: path.as_ref().to_str().unwrap().to_string()
+            whitelist: Arc::new(ArcSwap::from_pointee(aggregated)),
+            data: path.as_ref().to_str().unwrap().to_string(),
         })
     }
-
 }
