@@ -1,5 +1,6 @@
 use arc_swap::ArcSwap;
 use ipnet::IpNet;
+use std::cmp::Ordering;
 use std::fs::File;
 use std::net::IpAddr;
 use std::path::Path;
@@ -26,10 +27,25 @@ impl Firewall {
             .binary_search_by(|net| {
                 if net.contains(ip) {
                     std::cmp::Ordering::Equal
-                } else if ip < &net.addr() {
+                } else if *ip < net.network() {
                     std::cmp::Ordering::Greater
                 } else {
                     std::cmp::Ordering::Less
+                }
+            })
+            .is_ok()
+    }
+
+    pub fn contains_net(&self, target_net: &IpNet) -> bool {
+        let current_nets = self.whitelist.load();
+        current_nets
+            .binary_search_by(|net| {
+                if net.contains(target_net) {
+                    Ordering::Equal
+                } else if target_net.network() < net.network() {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
                 }
             })
             .is_ok()

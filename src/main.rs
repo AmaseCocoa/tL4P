@@ -30,7 +30,12 @@ fn create_fw(rule_location: String) -> Result<Firewall, String> {
             "127.0.0.1/32".parse::<IpNet>().unwrap(),
             "0.0.0.0/32".parse::<IpNet>().unwrap(),
         ];
-        Ok(Firewall::new(allowed_ips, rule_location))
+        let fw = Firewall::new(allowed_ips, rule_location);
+        let res = fw.save_to_file();
+        if res.is_err() {
+            return Err(format!("Failed to create firewall instance").to_string())
+        }
+        Ok(fw)
     }
     
 }
