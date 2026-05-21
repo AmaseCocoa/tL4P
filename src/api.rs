@@ -66,7 +66,7 @@ impl TL4PApi {
         Json(app.fw.get_rules_as_strings())
     }
     
-    async fn override_rule(State(app): State<Self>, Json(payload): Json<AddIPsRequest>) {
+    async fn override_rule(State(app): State<Self>, Json(payload): Json<AddIPsRequest>) -> Json<AddIPResponse> {
         let mut parsed_address: Vec<IpNet> = vec![];
         for address in payload.addresses {
             match parse_to_ipnet(&address) {
@@ -77,9 +77,14 @@ impl TL4PApi {
             };
         };
         app.fw.replace_rules(parsed_address);
+        let res = app.fw.save_to_file();
+        Json(AddIPResponse {
+            success: res.is_ok()
+        })
+        
     }
     
-    async fn add_ips(State(app): State<Self>, Json(payload): Json<AddIPsRequest>) {
+    async fn add_ips(State(app): State<Self>, Json(payload): Json<AddIPsRequest>) -> Json<AddIPResponse> {
         for address in payload.addresses {
             match parse_to_ipnet(&address) {
                 Ok(ip_addr) => {
@@ -88,14 +93,19 @@ impl TL4PApi {
                 Err(_) => {}
             };
         };
+        let res = app.fw.save_to_file();
+        Json(AddIPResponse {
+            success: res.is_ok()
+        })
     }
     
     async fn remove_ip(State(app): State<Self>, Json(payload): Json<AddIPRequest>) -> Json<AddIPResponse> {
         match parse_to_ipnet(&payload.address) {
             Ok(ip_addr) => {
                 app.fw.remove_network(&ip_addr);
+                let res = app.fw.save_to_file();
                 Json(AddIPResponse {
-                    success: true
+                    success: res.is_ok()
                 })
             },
             Err(_) => {
@@ -110,8 +120,9 @@ impl TL4PApi {
         match parse_to_ipnet(&payload.address) {
             Ok(ip_addr) => {
                 app.fw.add_network(ip_addr);
+                let res = app.fw.save_to_file();
                 Json(AddIPResponse {
-                    success: true
+                    success: res.is_ok()
                 })
             },
             Err(_) => {

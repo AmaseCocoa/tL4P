@@ -1,7 +1,6 @@
 use arc_swap::ArcSwap;
 use ipnet::IpNet;
 use std::fs::File;
-use std::io::{Read, Write};
 use std::net::IpAddr;
 use std::path::Path;
 use std::sync::Arc;
@@ -9,13 +8,15 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct Firewall {
     whitelist: Arc<ArcSwap<Vec<IpNet>>>,
+    data: String
 }
 
 impl Firewall {
-    pub fn new(mut initial_nets: Vec<IpNet>) -> Self {
+    pub fn new(mut initial_nets: Vec<IpNet>, rule_location: String) -> Self {
         initial_nets.sort();
         Self {
             whitelist: Arc::new(ArcSwap::from_pointee(initial_nets)),
+            data: rule_location
         }
     }
 
@@ -62,27 +63,22 @@ impl Firewall {
         current_nets.iter().map(|net| net.to_string()).collect()
     }
 
-    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn save_to_file(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let file_loc = Path::new(&self.data);
         let current_nets = self.whitelist.load();
-
-        let encoded: Vec<u8> = bincode::serialize(&**current_nets)?;
-
-        let mut file = File::create(path)?;
-        file.write_all(&encoded)?;
+        let file = File::create(file_loc)?;
+        serde_json::to_writer(file, &**current_nets)?;
         Ok(())
     }
-
+    
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut file = File::open(path)?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
-
-        let mut nets: Vec<IpNet> = bincode::deserialize(&buffer)?;
-
+        let file = File::open(&path)?;
+        let mut nets: Vec<IpNet> = serde_json::from_reader(file)?;
         nets.sort();
-
         Ok(Self {
             whitelist: Arc::new(ArcSwap::from_pointee(nets)),
+            data: path.as_ref().to_str().unwrap().to_string()
         })
     }
+
 }
